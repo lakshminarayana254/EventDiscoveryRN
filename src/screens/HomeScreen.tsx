@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { View, Text, TextInput, FlatList, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
@@ -16,11 +16,24 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const { user, addToFavorites, removeFromFavorites, isFavorite, favorites } = useAuth();
   //const { user, addToFavorites, removeFromFavorites, isFavorite } = useAuth();
   const { isRTL, t } = useLanguage();
-  
+
   const [city, setCity] = useState('');
   const [keyword, setKeyword] = useState('');
 
+  // POTENTIAL LEAK: No cleanup for debounced search
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const { events, loading, error, fetchInitialEvents, searchEvents } = useTicketmasterEvents();
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSearch = useCallback(() => {
     if (city.trim() || keyword.trim()) {
@@ -67,15 +80,15 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   }, [fetchInitialEvents]);
 
   const renderEvent = useCallback(({ item }: { item: TicketmasterEvent }) => (
-  <EventCard
-    item={item}
-    isRTL={isRTL}
-    isFavorite={isFavorite(item.id)}
-    onEventPress={handleEventPress}
-    onFavoritePress={handleFavoritePress}
-    onBookingPress={handleBooking}
-  />
-), [isRTL, isFavorite, handleEventPress, handleFavoritePress, handleBooking, favorites]); // Add favorites here
+    <EventCard
+      item={item}
+      isRTL={isRTL}
+      isFavorite={isFavorite(item.id)}
+      onEventPress={handleEventPress}
+      onFavoritePress={handleFavoritePress}
+      onBookingPress={handleBooking}
+    />
+  ), [isRTL, isFavorite, handleEventPress, handleFavoritePress, handleBooking, favorites]); // Add favorites here
 
   const keyExtractor = useCallback((item: TicketmasterEvent) => item.id, []);
 
@@ -89,7 +102,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     <View style={styles.emptyContainer}>
       <Text style={styles.emptyText}>No events found</Text>
       <Text style={styles.emptySubtext}>
-        {city.trim() || keyword.trim() 
+        {city.trim() || keyword.trim()
           ? "Try different search terms or clear search"
           : "No upcoming events available"
         }
@@ -113,7 +126,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         >
           <Text style={styles.profileButtonText}>👤</Text>
         </TouchableOpacity>
-        
+
         <View style={styles.titleContainer}>
           <Text style={[styles.title, isRTL && styles.rtlText]}>🎫 {t('nav.home')}</Text>
           {user && (
@@ -122,10 +135,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             </Text>
           )}
         </View>
-        
+
         <View style={styles.headerSpacer} />
       </View>
-      
+
       {/* Search Inputs */}
       <View style={[styles.searchContainer, isRTL && styles.rtlSearchContainer]}>
         <TextInput
@@ -150,7 +163,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           autoCapitalize="words"
           autoCorrect={false}
         />
-        
+
         <View style={styles.searchButtonsContainer}>
           <TouchableOpacity
             style={[styles.searchButton, loading && styles.searchButtonDisabled]}
@@ -163,7 +176,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
               <Text style={styles.searchButtonText}>🔍 Find Events</Text>
             )}
           </TouchableOpacity>
-          
+
           {(city.trim() || keyword.trim()) && (
             <TouchableOpacity style={styles.clearButton} onPress={handleClearSearch}>
               <Text style={styles.clearButtonText}>✕ Clear</Text>
@@ -197,14 +210,23 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           data={events}
           keyExtractor={keyExtractor}
           renderItem={renderEvent}
+
+          // Memory optimization props
+          removeClippedSubviews={true} // Remove off-screen views
+          maxToRenderPerBatch={10} // Limit rendered items per batch
+          updateCellsBatchingPeriod={50} // Batch updates
+          windowSize={10} // Number of screens to render
+          initialNumToRender={8} // Initial render count
+
+          // Prevent memory buildup
           getItemLayout={getItemLayout}
           style={styles.eventsList}
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews={true}
-          maxToRenderPerBatch={10}
-          windowSize={10}
-          initialNumToRender={10}
           ListEmptyComponent={EmptyComponent}
+
+          // Performance optimizations
+          legacyImplementation={false}
+          disableVirtualization={false}
         />
       )}
 
