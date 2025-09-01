@@ -39,8 +39,9 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
   // Form validation
   const [errors, setErrors] = useState<FormErrors>({});
   const [showPassword, setShowPassword] = useState(false);
-
-  // Authentication and navigation are now handled automatically by AuthContext and AppNavigator
+  
+  // Track which fields have been touched/edited
+  const [touchedFields, setTouchedFields] = useState<Set<string>>(new Set());
 
   const validateForm = useCallback((): boolean => {
     const newErrors: FormErrors = {};
@@ -76,13 +77,48 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
     return Object.keys(newErrors).length === 0;
   }, [email, password, isSignUp, displayName, confirmPassword]);
 
+  // Clear validation error when user starts typing
+  const clearFieldError = useCallback((fieldName: string) => {
+    if (errors[fieldName as keyof FormErrors]) {
+      setErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors[fieldName as keyof FormErrors];
+        return newErrors;
+      });
+    }
+  }, [errors]);
+
+  // Enhanced input handlers that clear errors
+  const handleEmailChange = useCallback((text: string) => {
+    setEmail(text);
+    clearFieldError('email');
+    setTouchedFields(prev => new Set(prev).add('email'));
+  }, [clearFieldError]);
+
+  const handlePasswordChange = useCallback((text: string) => {
+    setPassword(text);
+    clearFieldError('password');
+    setTouchedFields(prev => new Set(prev).add('password'));
+  }, [clearFieldError]);
+
+  const handleConfirmPasswordChange = useCallback((text: string) => {
+    setConfirmPassword(text);
+    clearFieldError('confirmPassword');
+    setTouchedFields(prev => new Set(prev).add('confirmPassword'));
+  }, [clearFieldError]);
+
+  const handleDisplayNameChange = useCallback((text: string) => {
+    setDisplayName(text);
+    clearFieldError('displayName');
+    setTouchedFields(prev => new Set(prev).add('displayName'));
+  }, [clearFieldError]);
+
   const handleSignIn = useCallback(async () => {
     if (!validateForm()) return;
 
     try {
       await signIn(email.trim(), password);
       console.log('Sign in successful');
-      // Navigation is handled by the useEffect above
     } catch (error: any) {
       showError(error.message, 'Sign In Error');
     }
@@ -98,7 +134,6 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
       showSuccess(
         'Your account has been created successfully!',
         'Account Created'
-        // Navigation will happen automatically when auth state changes
       );
     } catch (error: any) {
       showError(error.message, 'Sign Up Error');
@@ -112,7 +147,6 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     try {
-      // For now, just show a mock message since we removed Firebase
       showInfo(
         'Password reset functionality would be implemented with your backend service.',
         'Password Reset'
@@ -125,6 +159,7 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
   const toggleMode = useCallback(() => {
     setIsSignUp(!isSignUp);
     setErrors({});
+    setTouchedFields(new Set());
     setPassword('');
     setConfirmPassword('');
     setDisplayName('');
@@ -148,8 +183,6 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
       : "Don't have an account? Sign Up";
   }, [isSignUp]);
 
-  // Loading state is now handled by AppNavigator
-  
   return (
     <KeyboardAvoidingView 
       style={styles.container} 
@@ -164,43 +197,50 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
         </View>
 
         <View style={styles.form}>
+          {/* Display Name Input - Only show error if field was touched */}
           {isSignUp && (
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Display Name</Text>
               <TextInput
                 style={[styles.input, errors.displayName ? styles.inputError : null]}
                 value={displayName}
-                onChangeText={setDisplayName}
+                onChangeText={handleDisplayNameChange}
                 placeholder="Enter your display name"
                 autoCapitalize="words"
                 returnKeyType="next"
               />
-              {errors.displayName && <Text style={styles.errorText}>{errors.displayName}</Text>}
+              {errors.displayName && touchedFields.has('displayName') && (
+                <Text style={styles.errorText}>{errors.displayName}</Text>
+              )}
             </View>
           )}
 
+          {/* Email Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Email</Text>
             <TextInput
               style={[styles.input, errors.email ? styles.inputError : null]}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={handleEmailChange}
               placeholder="Enter your email"
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="next"
             />
-            {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+            {errors.email && touchedFields.has('email') && (
+              <Text style={styles.errorText}>{errors.email}</Text>
+            )}
           </View>
 
+          {/* Password Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Password</Text>
             <View style={styles.passwordContainer}>
               <TextInput
                 style={[styles.passwordInput, errors.password ? styles.inputError : null]}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={handlePasswordChange}
                 placeholder="Enter your password"
                 secureTextEntry={!showPassword}
                 returnKeyType={isSignUp ? 'next' : 'done'}
@@ -212,24 +252,30 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
                 <EyeIcon isVisible={showPassword} />
               </TouchableOpacity>
             </View>
-            {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
+            {errors.password && touchedFields.has('password') && (
+              <Text style={styles.errorText}>{errors.password}</Text>
+            )}
           </View>
 
+          {/* Confirm Password Input - Only show in sign up mode */}
           {isSignUp && (
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Confirm Password</Text>
               <TextInput
                 style={[styles.input, errors.confirmPassword ? styles.inputError : null]}
                 value={confirmPassword}
-                onChangeText={setConfirmPassword}
+                onChangeText={handleConfirmPasswordChange}
                 placeholder="Confirm your password"
                 secureTextEntry={!showPassword}
                 returnKeyType="done"
               />
-              {errors.confirmPassword && <Text style={styles.errorText}>{errors.confirmPassword}</Text>}
+              {errors.confirmPassword && touchedFields.has('confirmPassword') && (
+                <Text style={styles.errorText}>{errors.confirmPassword}</Text>
+              )}
             </View>
           )}
 
+          {/* Submit Button */}
           <TouchableOpacity
             style={[styles.primaryButton, authLoading && styles.buttonDisabled]}
             onPress={isSignUp ? handleSignUp : handleSignIn}
@@ -244,7 +290,8 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
             )}
           </TouchableOpacity>
 
-                    {!isSignUp && (
+          {/* Forgot Password - Only show in sign in mode */}
+          {!isSignUp && (
             <TouchableOpacity
               style={styles.forgotPasswordButton}
               onPress={handleForgotPassword}
@@ -254,12 +301,14 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
             </TouchableOpacity>
           )}
 
+          {/* Divider */}
           <View style={styles.divider}>
             <View style={styles.dividerLine} />
             <Text style={styles.dividerText}>or</Text>
             <View style={styles.dividerLine} />
           </View>
 
+          {/* Toggle Sign In/Sign Up */}
           <TouchableOpacity
             style={styles.toggleButton}
             onPress={toggleMode}

@@ -305,4 +305,16 @@ export const homeStyles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
   },
+  loadingMoreContainer: {
+  paddingVertical: 20,
+  paddingHorizontal: 16,
+  alignItems: 'center',
+  backgroundColor: '#f8f9fa',
+},
+loadingMoreText: {
+  marginTop: 8,
+  fontSize: 14,
+  color: '#666',
+  textAlign: 'center',
+},
 });

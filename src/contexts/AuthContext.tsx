@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { secureStorage } from '../services/secureStorage';
 
 export interface User {
@@ -198,44 +198,59 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Favorites functionality
 // In AuthContext.tsx - addToFavorites function
-const addToFavorites = async (eventId: string): Promise<void> => {
-  if (!user) throw new Error('Please sign in to add favorites');
-  
-  try {
-    const updatedFavorites = [...favorites, eventId]; // Add to array
-    setFavorites(updatedFavorites); // Update state
-    await secureStorage.storeUserFavorites(user.id, updatedFavorites); // Save to storage
-  } catch (error) {
-    setFavorites(favorites); // Revert on error
-    throw new Error('Failed to add to favorites');
-  }
-};
+  const addToFavorites = useCallback(async (eventId: string) => {
+    if (!user) {
+      throw new Error('Please sign in to add favorites');
+    }
 
-  const removeFromFavorites = async (eventId: string): Promise<void> => {
+    try {
+      // Update state immediately for instant UI feedback
+      setFavorites(prev => {
+        if (prev.includes(eventId)) {
+          return prev; // Already a favorite
+        }
+        return [...prev, eventId];
+      });
+
+      // Store in AsyncStorage
+      const updatedFavorites = [...favorites, eventId];
+      await secureStorage.storeUserFavorites(user.id, updatedFavorites);
+      
+      console.log('✅ Added to favorites:', eventId);
+    } catch (error) {
+      // Revert state on error
+      setFavorites(prev => prev.filter(id => id !== eventId));
+      console.error('Failed to add favorite:', error);
+      throw error;
+    }
+  }, [user, favorites]);
+
+  const removeFromFavorites = useCallback(async (eventId: string) => {
     if (!user) {
       throw new Error('Please sign in to manage favorites');
     }
-    
-    if (!eventId) {
-      throw new Error('Invalid event ID');
-    }
-    
-    try {
-      const updatedFavorites = favorites.filter(id => id !== eventId);
-      setFavorites(updatedFavorites);
-      await secureStorage.storeUserFavorites(user.id, updatedFavorites);
-    } catch (error) {
-      // Revert on error
-      setFavorites(favorites);
-      console.error('Failed to remove from favorites:', error);
-      throw new Error('Failed to remove from favorites. Please try again.');
-    }
-  };
 
-  const isFavorite = (eventId: string): boolean => {
-    if (!eventId) return false;
+    try {
+      // Update state immediately for instant UI feedback
+      setFavorites(prev => prev.filter(id => id !== eventId));
+
+      // Store in AsyncStorage
+      const updatedFavorites = favorites.filter(id => id !== eventId);
+      await secureStorage.storeUserFavorites(user.id, updatedFavorites);
+      
+      console.log('✅ Removed from favorites:', eventId);
+    } catch (error) {
+      // Revert state on error
+      setFavorites(prev => [...prev, eventId]);
+      console.error('Failed to remove favorite:', error);
+      throw error;
+    }
+  }, [user, favorites]);
+
+  // 🎯 OPTIMIZED: Memoize isFavorite function
+  const isFavorite = useCallback((eventId: string): boolean => {
     return favorites.includes(eventId);
-  };
+  }, [favorites]);
 
   const value: AuthContextType = {
     user,

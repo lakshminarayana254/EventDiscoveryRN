@@ -45,16 +45,23 @@ interface TicketmasterResponse {
   };
   page?: {
     totalElements: number;
+    totalPages: number;
+    number: number;
+    size: number;
   };
 }
 
 interface UseTicketmasterEventsResult {
   events: TicketmasterEvent[];
   loading: boolean;
+  loadingMore: boolean;
   error: string | null;
   totalEvents: number;
+  hasMore: boolean;
+  currentPage: number;
   fetchInitialEvents: () => Promise<void>;
   searchEvents: (city: string, keyword: string) => Promise<void>;
+  loadMoreEvents: () => Promise<void>;
   refetch: () => Promise<void>;
 }
 
@@ -62,34 +69,50 @@ interface UseTicketmasterEventsOptions {
   apiKey?: string;
   autoLoad?: boolean;
   fallbackToMock?: boolean;
+  pageSize?: number;
 }
-
 
 export const useTicketmasterEvents = (options: UseTicketmasterEventsOptions = {}): UseTicketmasterEventsResult => {
   const {
     apiKey = API_CONFIG.TICKETMASTER.API_KEY,
     autoLoad = true,
-    fallbackToMock = true
+    fallbackToMock = true,
+    pageSize = 20
   } = options;
 
+  // State management
   const [events, setEvents] = useState<TicketmasterEvent[]>([]);
-  const [loading, setLoading] = useState(false); // Changed: Don't auto-set loading on mount
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalEvents, setTotalEvents] = useState(0);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [lastSearchParams, setLastSearchParams] = useState<{ city: string; keyword: string } | null>(null);
 
-  // Add refs to prevent multiple simultaneous calls
+  // Refs to prevent multiple simultaneous calls
   const isInitialLoadingRef = useRef(false);
   const isSearchingRef = useRef(false);
+  const isLoadingMoreRef = useRef(false);
   const hasInitiallyLoadedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Configure axios with better error handling for React Native
+  // Configure axios
   const apiClient = useRef(axios.create({
     timeout: API_CONFIG.TICKETMASTER.TIMEOUT,
     headers: {
       'Accept': 'application/json',
     }
   })).current;
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Test network connectivity
   const testConnectivity = useCallback(async (): Promise<boolean> => {
@@ -121,6 +144,7 @@ export const useTicketmasterEvents = (options: UseTicketmasterEventsOptions = {}
 
   // Handle API errors with user-friendly messages
   const handleApiError = useCallback((err: any): string => {
+    
     console.error('Ticketmaster API Error:', err);
     
     if (axios.isAxiosError(err)) {
@@ -137,108 +161,175 @@ export const useTicketmasterEvents = (options: UseTicketmasterEventsOptions = {}
     return 'An unexpected error occurred.';
   }, []);
 
-  // Fetch initial events (US events) - Fixed to prevent multiple calls
-  const fetchInitialEvents = useCallback(async () => {
-    // Prevent multiple simultaneous calls
-    if (isInitialLoadingRef.current) {
-      console.log('Initial loading already in progress, skipping...');
-      return;
-    }
-
-    isInitialLoadingRef.current = true;
-    setLoading(true);
-    setError(null);
-    setLastSearchParams(null);
-
+  // Generic fetch function for API calls
+  const fetchEventsFromAPI = useCallback(async (
+    city: string, 
+    keyword: string, 
+    page: number = 0, 
+    append: boolean = false
+  ): Promise<void> => {
     try {
-      // Test connectivity first
-      const isConnected = await testConnectivity();
-      if (!isConnected && fallbackToMock) {
-        console.log('No internet connection detected, using mock data');
-        setError('No internet connection. Using offline data.');
-        hasInitiallyLoadedRef.current = true;
-        return;
+      // Cancel previous request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-
-      console.log('Fetching initial events from Ticketmaster API...');
-      const url = `${API_CONFIG.TICKETMASTER.BASE_URL}?countryCode=US&apikey=${API_CONFIG.TICKETMASTER.API_KEY}`;
-      console.log('Request URL:', url);
       
-      const response = await apiClient.get<TicketmasterResponse>(url);
-      console.log('API Response status:', response.status);
+      abortControllerRef.current = new AbortController();
+
+      let url = `${API_CONFIG.TICKETMASTER.BASE_URL}?apikey=${API_CONFIG.TICKETMASTER.API_KEY}&page=${page}&size=${pageSize}`;
+      
+      if (city.trim()) {
+        url += `&city=${encodeURIComponent(city.trim())}`;
+      }
+      if (keyword.trim()) {
+        url += `&keyword=${encodeURIComponent(keyword.trim())}`;
+      }
+      
+      console.log(`🔍 Fetching events - Page: ${page + 1}, Append: ${append}`);
+      
+      const response = await apiClient.get<TicketmasterResponse>(url, {
+        signal: abortControllerRef.current.signal
+      });
 
       if (response.data._embedded?.events) {
-        const formattedEvents = transformEvents(response.data._embedded.events);
-        setEvents(formattedEvents);
-        setTotalEvents(response.data.page?.totalElements || formattedEvents.length);
+        const newEvents = transformEvents(response.data._embedded.events, city);
+        const pageInfo = response.data.page;
+        
+        if (append) {
+          // Append new events for pagination
+          setEvents(prev => [...prev, ...newEvents]);
+          console.log(`📄 Loaded ${newEvents.length} more events`);
+        } else {
+          // Replace events for new search
+          setEvents(newEvents);
+          console.log(`🆕 Loaded ${newEvents.length} events for new search`);
+        }
+        
+        setTotalEvents(pageInfo?.totalElements || newEvents.length);
+        setCurrentPage(page);
+        setHasMore(pageInfo ? (page + 1) < pageInfo.totalPages : false);
         setError(null);
-        hasInitiallyLoadedRef.current = true;
+        
+        console.log(`📊 Page: ${page + 1}/${pageInfo?.totalPages || 1}, Has More: ${pageInfo ? (page + 1) < pageInfo.totalPages : false}`);
       } else {
-        setEvents([]);
-        setTotalEvents(0);
+        if (!append) {
+          setEvents([]);
+          setTotalEvents(0);
+        }
+        setHasMore(false);
+        console.log('📭 No events found');
       }
-    } catch (err) {
-      const errorMessage = handleApiError(err);
-      setError(errorMessage);
-      setEvents([]);
-      setTotalEvents(0);
-    } finally {
-      setLoading(false);
-      isInitialLoadingRef.current = false;
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        const errorMessage = handleApiError(err);
+        setError(errorMessage);
+        if (!append) {
+          setEvents([]);
+          setTotalEvents(0);
+        }
+        setHasMore(false);
+      }
     }
-  }, [apiKey, testConnectivity, fallbackToMock, transformEvents, handleApiError]);
+  }, [pageSize, transformEvents, handleApiError]);
 
-  // Search events with city and/or keyword - Fixed to prevent multiple calls
-  const searchEvents = useCallback(async (city: string, keyword: string) => {
-    // Prevent multiple simultaneous calls
-    if (isSearchingRef.current) {
-      console.log('Search already in progress, skipping...');
+  // Fetch initial events (US events)
+  const fetchInitialEvents = useCallback(async () => {
+  if (isInitialLoadingRef.current) {
+    console.log('Initial loading already in progress, skipping...');
+    return;
+  }
+
+  isInitialLoadingRef.current = true;
+  setLoading(true);
+  setError(null);
+  // SET lastSearchParams for initial load pagination
+  setLastSearchParams({ city: '', keyword: '' });
+  setCurrentPage(0);
+  setHasMore(true);
+
+  try {
+    const isConnected = await testConnectivity();
+    if (!isConnected && fallbackToMock) {
+      console.log('No internet connection detected');
+      setError('No internet connection. Please check your network.');
+      hasInitiallyLoadedRef.current = true;
       return;
     }
 
-    const trimmedCity = city.trim();
-    const trimmedKeyword = keyword.trim();
-    
+    console.log('Fetching initial events from Ticketmaster API...');
+    await fetchEventsFromAPI('', '', 0, false);
+    hasInitiallyLoadedRef.current = true;
+  } finally {
+    setLoading(false);
+    isInitialLoadingRef.current = false;
+  }
+}, [testConnectivity, fallbackToMock, fetchEventsFromAPI]);
+
+  // Search events (no debounce - manual trigger)
+  const searchEvents = useCallback(async (city: string, keyword: string) => {
+    if (isSearchingRef.current) {
+      console.log('⚠️ Search already in progress...');
+      return;
+    }
+
     isSearchingRef.current = true;
     setLoading(true);
     setError(null);
-    setLastSearchParams({ city: trimmedCity, keyword: trimmedKeyword });
+    setLastSearchParams({ city: city.trim(), keyword: keyword.trim() });
+    setCurrentPage(0);
+    setHasMore(true);
 
     try {
-       let url = `${API_CONFIG.TICKETMASTER.BASE_URL}?apikey=${API_CONFIG.TICKETMASTER.API_KEY}`;
-      
-      // Add search parameters only if they have values
-      if (trimmedCity) {
-        url += `&city=${encodeURIComponent(trimmedCity)}`;
-      }
-      if (trimmedKeyword) {
-        url += `&keyword=${encodeURIComponent(trimmedKeyword)}`;
-      }
-      
-      console.log('Search URL:', url);
-      const response = await apiClient.get<TicketmasterResponse>(url);
-
-      if (response.data._embedded?.events) {
-        const formattedEvents = transformEvents(response.data._embedded.events, trimmedCity);
-        setEvents(formattedEvents);
-        setTotalEvents(response.data.page?.totalElements || formattedEvents.length);
-        setError(null);
-      } else {
-        setEvents([]);
-        setTotalEvents(0);
-      }
-    } catch (err) {
-      const errorMessage = handleApiError(err);
-      setError(errorMessage);
-      setEvents([]);
-      setTotalEvents(0);
+      console.log(`🔍 Searching events: city="${city}", keyword="${keyword}"`);
+      await fetchEventsFromAPI(city, keyword, 0, false);
     } finally {
       setLoading(false);
       isSearchingRef.current = false;
     }
-  }, [apiKey, transformEvents, handleApiError]);
+  }, [fetchEventsFromAPI]);
 
-  // Refetch last request (useful for retry functionality)
+  // Load more events (pagination)
+  const loadMoreEvents = useCallback(async () => {
+    console.log('📄 Load more triggered', {
+    isLoadingMore: isLoadingMoreRef.current,
+    hasMore,
+    loading,
+    lastSearchParams,
+    currentPage
+  });
+
+    if (isLoadingMoreRef.current || !hasMore || loading ) {
+      console.log('🚫 Cannot load more - conditions not met');
+      return;
+    }
+
+    isLoadingMoreRef.current = true;
+    setLoadingMore(true);
+    setError(null);
+
+    try {
+      const nextPage = currentPage + 1;
+      console.log(`📄 Loading page ${nextPage + 1}...`);
+
+      // FIX: Get search parameters from lastSearchParams
+    const searchCity = lastSearchParams?.city || '';
+    const searchKeyword = lastSearchParams?.keyword || '';
+      
+      await fetchEventsFromAPI(
+      searchCity, 
+      searchKeyword, 
+      nextPage, 
+      true // append = true
+      );
+    } catch (err) {
+      console.error('❌ Error loading more events:', err);
+    } finally {
+      setLoadingMore(false);
+      isLoadingMoreRef.current = false;
+    }
+  }, [hasMore, loading, lastSearchParams, currentPage, fetchEventsFromAPI]);
+
+  // Refetch current search
   const refetch = useCallback(async () => {
     if (lastSearchParams) {
       await searchEvents(lastSearchParams.city, lastSearchParams.keyword);
@@ -247,21 +338,25 @@ export const useTicketmasterEvents = (options: UseTicketmasterEventsOptions = {}
     }
   }, [lastSearchParams, searchEvents, fetchInitialEvents]);
 
-  // Auto-load initial events on mount - Fixed to prevent multiple calls
+  // Auto-load initial events on mount
   useEffect(() => {
     if (autoLoad && !hasInitiallyLoadedRef.current && !isInitialLoadingRef.current) {
       console.log('Auto-loading initial events...');
       fetchInitialEvents();
     }
-  }, []); // Empty dependency array to run only once
+  }, [autoLoad, fetchInitialEvents]);
 
   return {
     events,
     loading,
+    loadingMore,
     error,
     totalEvents,
+    hasMore,
+    currentPage,
     fetchInitialEvents,
     searchEvents,
+    loadMoreEvents,
     refetch
   };
 };

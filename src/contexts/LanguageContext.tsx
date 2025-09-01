@@ -243,25 +243,34 @@ export const LanguageProvider: React.FC<LanguageProviderProps> = ({ children }) 
     loadLanguage();
   }, []);
 
-  const loadLanguage = async () => {
-    try {
-      const savedPreferences = await secureStorage.getAppPreferences();
-      if (savedPreferences?.language) {
-        const lang = savedPreferences.language as Language;
-        setLanguage(lang);
-        const rtl = lang === 'ar';
-        setIsRTL(rtl);
-        
-        // Apply RTL layout
-        I18nManager.forceRTL(rtl);
-      }
-    } catch (error) {
-      console.error('Failed to load language preferences:', error);
-      // Set defaults on error
+ const loadLanguage = async () => {
+  try {
+    const savedPreferences = await secureStorage.getAppPreferences();
+    if (savedPreferences?.language) {
+      const lang = savedPreferences.language as Language;
+      setLanguage(lang);
+      const rtl = lang === 'ar';
+      setIsRTL(rtl);
+      
+      // Apply RTL layout
+      I18nManager.forceRTL(rtl);
+      
+      console.log(`🌍 Loaded language: ${lang}, RTL: ${rtl}`);
+    } else {
+      // FIX: Handle case when no saved preferences exist
+      console.log('🌍 No saved language preferences, using defaults');
       setLanguage('en');
       setIsRTL(false);
+      I18nManager.forceRTL(false);
     }
-  };
+  } catch (error) {
+    console.error('Failed to load language preferences:', error);
+    // Set defaults on error
+    setLanguage('en');
+    setIsRTL(false);
+    I18nManager.forceRTL(false);
+  }
+};
 
   const toggleLanguage = async () => {
     try {

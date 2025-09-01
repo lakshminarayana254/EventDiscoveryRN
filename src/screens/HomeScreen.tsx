@@ -15,7 +15,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const { user, addToFavorites, removeFromFavorites, isFavorite, favorites } = useAuth();
   //const { user, addToFavorites, removeFromFavorites, isFavorite } = useAuth();
-  const { isRTL, t } = useLanguage();
+  const { isRTL} = useLanguage();
 
   const [city, setCity] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -24,7 +24,18 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { events, loading, error, fetchInitialEvents, searchEvents } = useTicketmasterEvents();
+ const { 
+    events, 
+    loading, 
+    loadingMore,
+    error, 
+    totalEvents,
+    hasMore,
+    fetchInitialEvents, 
+    searchEvents,
+    loadMoreEvents,
+    refetch
+  } = useTicketmasterEvents();
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -73,6 +84,17 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }
   }, []);
 
+   // Handle infinite scroll
+  const handleEndReached = useCallback(() => {
+    console.log('🔄 End reached, checking if can load more...');
+    if (hasMore && !loadingMore && !loading) {
+      console.log('✅ Loading more events...');
+      loadMoreEvents();
+    } else {
+      console.log('🚫 Cannot load more:', { hasMore, loadingMore, loading });
+    }
+  }, [hasMore, loadingMore, loading, loadMoreEvents]);
+
   const handleClearSearch = useCallback(() => {
     setCity('');
     setKeyword('');
@@ -88,7 +110,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
       onFavoritePress={handleFavoritePress}
       onBookingPress={handleBooking}
     />
-  ), [isRTL, isFavorite, handleEventPress, handleFavoritePress, handleBooking, favorites]); // Add favorites here
+  ), [isRTL, isFavorite, handleEventPress, handleFavoritePress, handleBooking]); // Add favorites here
 
   const keyExtractor = useCallback((item: TicketmasterEvent) => item.id, []);
 
@@ -97,6 +119,18 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     offset: 200 * index,
     index,
   }), []);
+
+  // Footer component for loading more indicator
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    
+    return (
+      <View style={styles.loadingMoreContainer}>
+        <ActivityIndicator size="small" color="#007AFF" />
+        <Text style={styles.loadingMoreText}>Loading more events...</Text>
+      </View>
+    );
+  }, [loadingMore]);
 
   const EmptyComponent = useMemo(() => (
     <View style={styles.emptyContainer}>
@@ -128,10 +162,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         </TouchableOpacity>
 
         <View style={styles.titleContainer}>
-          <Text style={[styles.title, isRTL && styles.rtlText]}>🎫 {t('nav.home')}</Text>
+          <Text style={[styles.title, isRTL && styles.rtlText]}>🎫 </Text>
           {user && (
             <Text style={[styles.welcomeText, isRTL && styles.rtlText]}>
-              {t('auth.welcome')}, {user.name || user.email}!
+               {user.name || user.email}!
             </Text>
           )}
         </View>
@@ -217,6 +251,11 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           updateCellsBatchingPeriod={50} // Batch updates
           windowSize={10} // Number of screens to render
           initialNumToRender={8} // Initial render count
+
+          // Pagination props
+          onEndReached={handleEndReached}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
 
           // Prevent memory buildup
           getItemLayout={getItemLayout}
